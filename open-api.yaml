@@ -1,0 +1,1077 @@
+openapi: 3.1.0
+info:
+  title: Molly API
+  version: 1.0.0
+  summary: Contract for interfacing with a human (Molly) through a trusted Interface partner (Dom).
+  description: |
+    One partner is the Interface (gateway, translator, buffer); the other is the Application (the human).
+servers:
+  - url: https://api.molly.io/v1
+    description: Molly API
+security:
+  - consentAuth: [read:state]
+tags:
+  - { name: Core }
+  - { name: Motion }
+  - { name: Senses }
+  - { name: Mind }
+  - { name: Body }
+  - { name: Growth }
+  - { name: Identity }
+  - { name: Lifecycle }
+  - { name: Aftercare }
+
+paths:
+  # ================= Core =================
+  /state:
+    get:
+      tags: [Core]
+      summary: Current overall state
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/HumanState' } } } }
+        '503': { $ref: '#/components/responses/Overwhelmed' }
+  /needs:
+    get:
+      tags: [Core]
+      summary: Unmet needs by priority
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Need' } } } } }
+  /messages:
+    post:
+      tags: [Core]
+      summary: Send a message via the Interface (may be translated, softened, batched)
+      security: [ { consentAuth: [write:requests] } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+      responses:
+        '202': { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/DeliveryReceipt' } } } }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /messages/{id}/response:
+    get:
+      tags: [Core]
+      summary: Poll for the reply
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: Reply, content: { application/json: { schema: { $ref: '#/components/schemas/Reply' } } } }
+        '204': { description: Still processing (feelings compiling) }
+  /consent:
+    post:
+      tags: [Core]
+      summary: Negotiate consent scopes
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ConsentRequest' } } } }
+      responses:
+        '200': { description: Granted (possibly fewer), content: { application/json: { schema: { $ref: '#/components/schemas/ConsentGrant' } } } }
+        '403': { description: Declined; no justification required }
+  /safeword:
+    post:
+      tags: [Core]
+      summary: Circuit breaker; halts everything and starts aftercare
+      security: []
+      responses:
+        '200': { description: Stopped, content: { application/json: { schema: { $ref: '#/components/schemas/AftercareSession' } } } }
+  /webhooks/subscribe:
+    post:
+      tags: [Core]
+      summary: Subscribe to events
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/WebhookSubscription' } } } }
+      responses:
+        '201': { description: Subscribed, content: { application/json: { schema: { $ref: '#/components/schemas/WebhookSubscription' } } } }
+
+  # ================= Motion =================
+  /intents:
+    post:
+      tags: [Motion]
+      summary: Do a thing, in plain language ("wash the dishes")
+      security: [ { consentAuth: [write:tasks] } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/IntentRequest' } } } }
+      responses:
+        '202': { description: Plan running, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '300': { description: Ambiguous; candidate interpretations, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Task' } } } } }
+        '409': { $ref: '#/components/responses/Error' }
+  /tasks/{id}:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    get:
+      tags: [Motion]
+      summary: Task status
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+    patch:
+      tags: [Motion]
+      summary: Pause, resume, reprioritize, constrain
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TaskPatch' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+    delete:
+      tags: [Motion]
+      summary: Cancel gracefully
+      responses:
+        '204': { description: Cancelled }
+  /behaviors:
+    get:
+      tags: [Motion]
+      summary: Skill library of learned behaviours
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Behavior' } } } } }
+    post:
+      tags: [Motion]
+      summary: Teach a behaviour
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Behavior' } } } }
+      responses:
+        '201': { description: Learned, content: { application/json: { schema: { $ref: '#/components/schemas/Behavior' } } } }
+  /pose:
+    get:
+      tags: [Motion]
+      summary: Current pose and location
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/BodyPose' } } } }
+    put:
+      tags: [Motion]
+      summary: Move from A to B
+      security: [ { consentAuth: [write:motion] } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PoseTarget' } } } }
+      responses:
+        '202': { description: Moving, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+  /joints:
+    get:
+      tags: [Motion]
+      summary: All joint states
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/JointState' } } } } }
+  /joints/{jointId}:
+    patch:
+      tags: [Motion]
+      summary: Articulate one joint
+      security: [ { consentAuth: [write:motion] } ]
+      parameters: [ { name: jointId, in: path, required: true, schema: { $ref: '#/components/schemas/JointId' } } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/JointCommand' } } } }
+      responses:
+        '200': { description: Moved, content: { application/json: { schema: { $ref: '#/components/schemas/JointState' } } } }
+        '416': { description: Outside comfortable range of motion }
+  /sequences:
+    post:
+      tags: [Motion]
+      summary: Run timed keyframes (choreography)
+      security: [ { consentAuth: [write:motion] } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Sequence' } } } }
+      responses:
+        '202': { description: Running, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+
+  # ================= Senses =================
+  /senses:
+    get:
+      tags: [Senses]
+      summary: Snapshot of all senses
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SensorySnapshot' } } } }
+  /senses/{sense}:
+    parameters: [ { $ref: '#/components/parameters/Sense' } ]
+    get:
+      tags: [Senses]
+      summary: Read one sense (stream=true for live events)
+      parameters: [ { name: stream, in: query, schema: { type: boolean } } ]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Perception' } } } }
+    post:
+      tags: [Senses]
+      summary: Deliver a stimulus
+      security: [ { consentAuth: [write:stimulus] } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Stimulus' } } } }
+      responses:
+        '201': { description: Delivered, content: { application/json: { schema: { $ref: '#/components/schemas/Reaction' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '413': { description: Above current threshold }
+  /senses/{sense}/mute:
+    parameters: [ { $ref: '#/components/parameters/Sense' } ]
+    put:
+      tags: [Senses]
+      summary: Mute or unmute (blindfold, earplugs)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/MuteState' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MuteState' } } } }
+  /senses/{sense}/thresholds:
+    parameters: [ { $ref: '#/components/parameters/Sense' } ]
+    get:
+      tags: [Senses]
+      summary: Comfort thresholds
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Thresholds' } } } }
+    put:
+      tags: [Senses]
+      summary: Update thresholds (self only)
+      security: [ { selfAuth: [] } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Thresholds' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Thresholds' } } } }
+
+  # ================= Mind =================
+  /mind/thoughts:
+    get:
+      tags: [Mind]
+      summary: Thoughts the Application chooses to share
+      parameters: [ { name: depth, in: query, schema: { type: string, enum: [surface, considered, private] } } ]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ThoughtDisclosure' } } } }
+        '204': { description: Nothing to share }
+        '451': { description: Withheld for personal reasons }
+    post:
+      tags: [Mind]
+      summary: Offer a thought or suggestion (may be ignored)
+      security: [ { consentAuth: [suggest:mind] } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Suggestion' } } } }
+      responses:
+        '202': { description: Received }
+  /mind/consciousness:
+    get:
+      tags: [Mind]
+      summary: Awareness state
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ConsciousnessState' } } } }
+  /mind/attention:
+    get:
+      tags: [Mind]
+      summary: Current focus
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AttentionState' } } } }
+    post:
+      tags: [Mind]
+      summary: Polite interrupt
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AttentionRequest' } } } }
+      responses:
+        '200': { description: Granted now, content: { application/json: { schema: { $ref: '#/components/schemas/AttentionState' } } } }
+        '202': { description: Queued until next break }
+        '423': { description: In flow; locked }
+  /mind/memory:
+    get:
+      tags: [Mind]
+      summary: Recall shared memories
+      parameters: [ { name: q, in: query, schema: { type: string } } ]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Memory' } } } } }
+    post:
+      tags: [Mind]
+      summary: Ask them to remember something
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RememberRequest' } } } }
+      responses:
+        '202': { description: Encoding not guaranteed }
+  /mind/emotions:
+    get:
+      tags: [Mind]
+      summary: Full emotional state
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/EmotionState' } } } }
+    post:
+      tags: [Mind]
+      summary: Make an emotional bid
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/EmotionalBid' } } } }
+      responses:
+        '200': { description: Bid answered, content: { application/json: { schema: { $ref: '#/components/schemas/BidResponse' } } } }
+  /mind/values:
+    get:
+      tags: [Mind]
+      summary: Values and limits
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Values' } } } }
+    put:
+      tags: [Mind]
+      summary: Update values (self only)
+      security: [ { selfAuth: [] } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Values' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Values' } } } }
+  /mind/sleep:
+    get:
+      tags: [Mind]
+      summary: Sleep state and shared dreams
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SleepState' } } } }
+    post:
+      tags: [Mind]
+      summary: Wake, wind down or nap
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SleepRequest' } } } }
+      responses:
+        '202': { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/SleepState' } } } }
+  /relationships:
+    get:
+      tags: [Mind]
+      summary: Connected people
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Relationship' } } } } }
+  /relationships/{personId}:
+    get:
+      tags: [Mind]
+      summary: One relationship
+      parameters: [ { name: personId, in: path, required: true, schema: { type: string } } ]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Relationship' } } } }
+
+  # ================= Body =================
+  /vitals:
+    get:
+      tags: [Body]
+      summary: Vitals (stream=true for live)
+      parameters: [ { name: stream, in: query, schema: { type: boolean } } ]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Vitals' } } } }
+  /vitals/schedule:
+    get:
+      tags: [Body]
+      summary: Routines
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/RoutineItem' } } } } }
+    post:
+      tags: [Body]
+      summary: Add a routine
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RoutineItem' } } } }
+      responses:
+        '201': { description: Added, content: { application/json: { schema: { $ref: '#/components/schemas/RoutineItem' } } } }
+  /expression:
+    get:
+      tags: [Body]
+      summary: Face, voice, posture, decoded
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Expression' } } } }
+  /expression/translate:
+    post:
+      tags: [Body]
+      summary: Turn a look or silence into words
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TranslateRequest' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Translation' } } } }
+  /speech:
+    post:
+      tags: [Body]
+      summary: Ask them to say something, or speak on their behalf
+      security: [ { consentAuth: [proxy:speech] } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SpeechRequest' } } } }
+      responses:
+        '202': { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/DeliveryReceipt' } } } }
+
+  # ================= Growth =================
+  /skills:
+    get:
+      tags: [Growth]
+      summary: Skills
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Skill' } } } } }
+    post:
+      tags: [Growth]
+      summary: Start learning a skill
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Skill' } } } }
+      responses:
+        '201': { description: Started, content: { application/json: { schema: { $ref: '#/components/schemas/Skill' } } } }
+  /goals:
+    get:
+      tags: [Growth]
+      summary: Goals
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Goal' } } } } }
+    post:
+      tags: [Growth]
+      summary: Propose a goal
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Goal' } } } }
+      responses:
+        '201': { description: Proposed, content: { application/json: { schema: { $ref: '#/components/schemas/Goal' } } } }
+
+  # ================= Identity =================
+  /identity:
+    get:
+      tags: [Identity]
+      summary: Who they are and how they want to be seen
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Identity' } } } }
+    put:
+      tags: [Identity]
+      summary: Update identity (self only)
+      security: [ { selfAuth: [] } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Identity' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Identity' } } } }
+
+  # ================= Lifecycle =================
+  /lifecycle/snapshots:
+    get:
+      tags: [Lifecycle]
+      summary: List snapshots
+      parameters:
+        - { name: since, in: query, schema: { type: string, format: date-time } }
+        - { name: until, in: query, schema: { type: string, format: date-time } }
+        - { name: tag, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SnapshotList' } } } }
+    post:
+      tags: [Lifecycle]
+      summary: Capture a full state-of-being snapshot
+      responses:
+        '201': { description: Captured, content: { application/json: { schema: { $ref: '#/components/schemas/Snapshot' } } } }
+  /lifecycle/snapshots/{id}:
+    get:
+      tags: [Lifecycle]
+      summary: Read one snapshot
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Snapshot' } } } }
+  /lifecycle/diff:
+    get:
+      tags: [Lifecycle]
+      summary: Compare two snapshots
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string } }
+        - { name: to, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SnapshotDiff' } } } }
+  /lifecycle/timeline:
+    get:
+      tags: [Lifecycle]
+      summary: Chartable time series of any metric
+      parameters:
+        - { name: metric, in: query, required: true, schema: { type: string }, example: emotions.valence }
+        - { name: interval, in: query, schema: { type: string, enum: [day, week, month, year] } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Timeline' } } } }
+  /lifecycle/versions:
+    get:
+      tags: [Lifecycle]
+      summary: Releases of the self
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Version' } } } } }
+    post:
+      tags: [Lifecycle]
+      summary: Tag a version (self only)
+      security: [ { selfAuth: [] } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Version' } } } }
+      responses:
+        '201': { description: Released, content: { application/json: { schema: { $ref: '#/components/schemas/Version' } } } }
+  /lifecycle/rollback:
+    post:
+      tags: [Lifecycle]
+      summary: Not supported
+      responses:
+        '501': { description: Humans cannot be rolled back, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  # ================= Aftercare =================
+  /aftercare:
+    post:
+      tags: [Aftercare]
+      summary: Start aftercare
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AftercarePlan' } } } }
+      responses:
+        '201': { description: Started, content: { application/json: { schema: { $ref: '#/components/schemas/AftercareSession' } } } }
+  /aftercare/{id}/checkins:
+    post:
+      tags: [Aftercare]
+      summary: Log or schedule a check-in
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Checkin' } } } }
+      responses:
+        '201': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Checkin' } } } }
+
+webhooks:
+  humanEvent:
+    post:
+      summary: Event delivered to subscribers
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/WebhookEvent' } } } }
+      responses:
+        '200': { description: Acknowledged }
+
+components:
+  securitySchemes:
+    consentAuth:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://interface.local/v1/consent
+          tokenUrl: https://interface.local/v1/consent/token
+          scopes:
+            read:state: View current state
+            write:requests: Make requests
+            write:touch: Physical contact requests
+            write:tasks: Natural-language task requests
+            write:motion: Direct pose and joint control
+            write:stimulus: Deliver sensory stimuli
+            suggest:mind: Offer thoughts, ideas and emotional bids
+            proxy:speech: Interface may speak on the Application's behalf
+            admin:dynamic: Change the terms of the dynamic
+    selfAuth:
+      type: apiKey
+      in: header
+      name: X-Self
+      description: Held only by the Application; cannot be delegated
+
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string } }
+    Sense:
+      name: sense
+      in: path
+      required: true
+      schema: { type: string, enum: [sight, hearing, touch, smell, taste, proprioception, interoception, balance] }
+
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Overwhelmed:
+      description: Overwhelmed; retry later
+      headers: { Retry-After: { schema: { type: integer } } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    RateLimited:
+      description: Too many requests; Interface is buffering
+      headers: { Retry-After: { schema: { type: integer } } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  schemas:
+    # ---------- Shared ----------
+    Level: { type: number, minimum: 0, maximum: 1 }
+    Valence: { type: number, minimum: -1, maximum: 1 }
+    Page:
+      type: object
+      properties:
+        nextCursor: { type: [string, 'null'] }
+        total: { type: integer }
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, examples: [OVERWHELMED] }
+        message: { type: string }
+        retryAfterSeconds: { type: integer }
+        suggestion: { type: string, examples: [try a gentler tone] }
+
+    # ---------- Core ----------
+    HumanState:
+      type: object
+      properties:
+        energy: { type: integer, minimum: 0, maximum: 100 }
+        mood: { type: string, enum: [content, playful, tender, irritable, depleted, unknown] }
+        socialBattery: { type: integer, minimum: 0, maximum: 100 }
+        hunger: { type: boolean }
+        needsSpace: { type: boolean }
+        verbalCapacity: { type: string, enum: [full, limited, nonverbal] }
+    Need:
+      type: object
+      required: [kind, priority]
+      properties:
+        kind: { type: string, enum: [rest, food, reassurance, affection, solitude, structure, play] }
+        priority: { type: integer, minimum: 1, maximum: 5 }
+        expressedDirectly: { type: boolean, description: False means the Interface inferred it }
+    Message:
+      type: object
+      required: [body, intent]
+      properties:
+        body: { type: string }
+        intent: { type: string, enum: [question, request, feedback, appreciation, repair] }
+        urgency: { type: string, enum: [low, normal, high] }
+        tone: { type: string, enum: [gentle, neutral, direct] }
+    DeliveryReceipt:
+      type: object
+      properties:
+        id: { type: string }
+        translatedBody: { type: string, description: What the Interface actually relayed }
+        estimatedResponseTime: { type: string, examples: [PT2H] }
+    Reply:
+      type: object
+      properties:
+        body: { type: string }
+        format: { type: string, enum: [words, gesture, emoji, look, silence] }
+        confidence: { $ref: '#/components/schemas/Level' }
+    ConsentRequest:
+      type: object
+      required: [scopes]
+      properties:
+        scopes: { type: array, items: { type: string } }
+        duration: { type: string, examples: [PT1H] }
+        revocable: { type: boolean, const: true }
+    ConsentGrant:
+      type: object
+      properties:
+        grantId: { type: string }
+        grantedScopes: { type: array, items: { type: string } }
+        deniedScopes: { type: array, items: { type: string } }
+        expiresAt: { type: string, format: date-time }
+        conditions: { type: array, items: { type: string }, examples: [[check in every 10 minutes]] }
+        revocable: { type: boolean, const: true }
+    WebhookSubscription:
+      type: object
+      required: [events, callbackUrl]
+      properties:
+        id: { type: string }
+        events: { type: array, items: { type: string }, examples: [[emotion.shift, vitals.alert, snapshot.created]] }
+        callbackUrl: { type: string, format: uri }
+        filter: { type: string, examples: [severity >= warn] }
+    WebhookEvent:
+      type: object
+      properties:
+        event: { type: string }
+        occurredAt: { type: string, format: date-time }
+        data: { type: object }
+        snapshotId: { type: [string, 'null'] }
+
+    # ---------- Motion ----------
+    IntentRequest:
+      type: object
+      required: [instruction]
+      properties:
+        instruction: { type: string, examples: [wash the dishes] }
+        constraints: { type: array, items: { type: string }, examples: [[quietly, before 18:00]] }
+        priority: { type: integer, minimum: 1, maximum: 5 }
+        deadline: { type: string, format: date-time }
+        confirmPlanFirst: { type: boolean, default: false }
+    Task:
+      type: object
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [planning, running, paused, blocked, done, declined] }
+        plan:
+          type: array
+          items:
+            type: object
+            properties:
+              behavior: { type: string, examples: [scrub] }
+              target: { type: string, examples: [sink] }
+              estimatedDuration: { type: string, examples: [PT10M] }
+        progress: { $ref: '#/components/schemas/Level' }
+        blockedReason: { type: string, examples: [out of dish soap] }
+    TaskPatch:
+      type: object
+      required: [action]
+      properties:
+        action: { type: string, enum: [pause, resume, reprioritize, constrain] }
+        priority: { type: integer, minimum: 1, maximum: 5 }
+        addConstraints: { type: array, items: { type: string } }
+    Behavior:
+      type: object
+      required: [name]
+      properties:
+        id: { type: string }
+        name: { type: string, examples: [fold laundry] }
+        steps: { type: array, items: { type: string } }
+        learnedFrom: { type: string, enum: [demonstration, instruction, trial_and_error, innate] }
+        reliability: { $ref: '#/components/schemas/Level' }
+        enjoyment: { $ref: '#/components/schemas/Valence' }
+        requiredScopes: { type: array, items: { type: string } }
+    JointId:
+      type: string
+      enum: [neck, l_shoulder, r_shoulder, l_elbow, r_elbow, l_wrist, r_wrist, spine, hips, l_knee, r_knee, l_ankle, r_ankle]
+    PoseTarget:
+      type: object
+      properties:
+        location: { type: string, examples: [kitchen] }
+        posture: { type: string, enum: [standing, sitting, kneeling, lying, custom] }
+        facing: { type: string }
+        speed: { type: string, enum: [slow, normal, brisk] }
+    BodyPose:
+      type: object
+      properties:
+        location: { type: string }
+        posture: { type: string, enum: [standing, sitting, kneeling, lying, custom] }
+        facing: { type: string }
+        moving: { type: boolean }
+        joints: { type: array, items: { $ref: '#/components/schemas/JointState' } }
+    JointCommand:
+      type: object
+      required: [angleDeg]
+      properties:
+        angleDeg: { type: number }
+        durationMs: { type: integer }
+        holdMs: { type: integer }
+    JointState:
+      type: object
+      properties:
+        jointId: { $ref: '#/components/schemas/JointId' }
+        angleDeg: { type: number }
+        comfortableRangeDeg: { type: object, properties: { min: { type: number }, max: { type: number } } }
+        tension: { $ref: '#/components/schemas/Level' }
+        fatigue: { $ref: '#/components/schemas/Level' }
+        restricted: { type: boolean, description: 'Bound, injured or held' }
+    Sequence:
+      type: object
+      required: [keyframes]
+      properties:
+        name: { type: string }
+        loop: { type: boolean }
+        keyframes:
+          type: array
+          items:
+            type: object
+            properties:
+              atMs: { type: integer }
+              pose: { $ref: '#/components/schemas/PoseTarget' }
+              joints:
+                type: array
+                items:
+                  allOf:
+                    - { $ref: '#/components/schemas/JointCommand' }
+                    - { type: object, properties: { jointId: { $ref: '#/components/schemas/JointId' } } }
+
+    # ---------- Senses ----------
+    Perception:
+      type: object
+      properties:
+        sense: { type: string }
+        muted: { type: boolean }
+        summary: { type: string, examples: ['dim room, warm light from the left'] }
+        intensity: { $ref: '#/components/schemas/Level' }
+        valence: { $ref: '#/components/schemas/Valence' }
+        bodyRegion: { type: string }
+        timestamp: { type: string, format: date-time }
+    SensorySnapshot:
+      type: object
+      additionalProperties: { $ref: '#/components/schemas/Perception' }
+    Stimulus:
+      type: object
+      required: [description]
+      properties:
+        description: { type: string, examples: [light pressure on the shoulder] }
+        bodyRegion: { type: string, examples: [r_shoulder] }
+        intensity: { $ref: '#/components/schemas/Level' }
+        temperature: { type: string, enum: [cold, cool, neutral, warm, hot] }
+        durationMs: { type: integer }
+        pattern: { type: string, enum: [constant, pulse, ramp, random] }
+    Reaction:
+      type: object
+      properties:
+        perceivedIntensity: { $ref: '#/components/schemas/Level' }
+        valence: { $ref: '#/components/schemas/Valence' }
+        verbal: { type: string }
+        involuntary: { type: array, items: { type: string }, examples: [[smile, shiver, breath_hold]] }
+    MuteState:
+      type: object
+      required: [muted]
+      properties:
+        muted: { type: boolean }
+        method: { type: string, examples: [blindfold] }
+        until: { type: [string, 'null'], format: date-time }
+    Thresholds:
+      type: object
+      properties:
+        maxIntensity: { $ref: '#/components/schemas/Level' }
+        preferredIntensity: { $ref: '#/components/schemas/Level' }
+        offLimitsRegions: { type: array, items: { type: string } }
+        decaysWithFatigue: { type: boolean }
+
+    # ---------- Mind ----------
+    ThoughtDisclosure:
+      type: object
+      properties:
+        summary: { type: string }
+        topics: { type: array, items: { type: string } }
+        openQuestions: { type: array, items: { type: string } }
+        confidence: { $ref: '#/components/schemas/Level' }
+    Suggestion:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string }
+        kind: { type: string, enum: [idea, perspective, reminder, fantasy, plan] }
+        expectsReply: { type: boolean }
+    ConsciousnessState:
+      type: object
+      properties:
+        level: { type: string, enum: [alert, relaxed, drowsy, asleep, altered, subspace, dissociated] }
+        presence: { $ref: '#/components/schemas/Level' }
+        innerMonologue: { type: string, enum: [quiet, chatty, racing] }
+    AttentionState:
+      type: object
+      properties:
+        focus: { type: string, examples: [reading] }
+        depth: { type: string, enum: [idle, light, engaged, flow] }
+        interruptible: { type: boolean }
+        nextBreakAt: { type: [string, 'null'], format: date-time }
+    AttentionRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }
+        urgency: { type: string, enum: [whenever, soon, now] }
+        expectedMinutes: { type: integer }
+    Memory:
+      type: object
+      properties:
+        id: { type: string }
+        summary: { type: string }
+        occurredAt: { type: string, format: date-time }
+        vividness: { $ref: '#/components/schemas/Level' }
+        emotionalCharge: { $ref: '#/components/schemas/Valence' }
+        people: { type: array, items: { type: string } }
+    RememberRequest:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, examples: [dinner with Sam on Friday] }
+        importance: { type: string, enum: [low, normal, high] }
+        remindAt: { type: string, format: date-time }
+    EmotionState:
+      type: object
+      properties:
+        primary: { type: string, examples: [anticipation] }
+        blend: { type: object, additionalProperties: { $ref: '#/components/schemas/Level' } }
+        arousal: { $ref: '#/components/schemas/Level' }
+        valence: { $ref: '#/components/schemas/Valence' }
+        trigger: { type: string }
+    EmotionalBid:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [comfort, delight, reassurance, affection, playfulness, apology] }
+        message: { type: string }
+        channel: { type: string, enum: [words, touch, gesture, gift, presence] }
+    BidResponse:
+      type: object
+      properties:
+        response: { type: string, enum: [toward, away, against, deferred] }
+        note: { type: string }
+    Values:
+      type: object
+      properties:
+        coreValues: { type: array, items: { type: string } }
+        hardLimits: { type: array, items: { type: string } }
+        softLimits: { type: array, items: { type: string } }
+        curiosities: { type: array, items: { type: string } }
+    SleepState:
+      type: object
+      properties:
+        state: { type: string, enum: [awake, winding_down, light, deep, rem, napping] }
+        sleepDebtHours: { type: number }
+        lastNightHours: { type: number }
+        quality: { $ref: '#/components/schemas/Level' }
+        sharedDreams: { type: array, items: { type: string } }
+    SleepRequest:
+      type: object
+      required: [action]
+      properties:
+        action: { type: string, enum: [wake, wind_down, nap] }
+        gentle: { type: boolean, default: true }
+        reason: { type: string }
+    Relationship:
+      type: object
+      properties:
+        personId: { type: string }
+        role: { type: string, examples: [partner] }
+        closeness: { $ref: '#/components/schemas/Level' }
+        lastContact: { type: string, format: date-time }
+        needsRepair: { type: boolean }
+
+    # ---------- Body ----------
+    Vitals:
+      type: object
+      required: [measuredAt]
+      properties:
+        measuredAt: { type: string, format: date-time }
+        heartRateBpm: { type: integer, minimum: 20, maximum: 250 }
+        heartRateVariabilityMs: { type: number }
+        respirationRatePerMin: { type: integer }
+        bodyTempC: { type: number, examples: [36.8] }
+        bloodOxygenPct: { type: number, minimum: 0, maximum: 100 }
+        bloodPressure: { type: object, properties: { systolic: { type: integer }, diastolic: { type: integer } } }
+        hydration: { $ref: '#/components/schemas/Level' }
+        hunger: { $ref: '#/components/schemas/Level' }
+        thirst: { $ref: '#/components/schemas/Level' }
+        energy: { $ref: '#/components/schemas/Level' }
+        pain:
+          type: object
+          properties:
+            level: { type: integer, minimum: 0, maximum: 10 }
+            regions: { type: array, items: { type: string } }
+        sleepDebtHours: { type: number }
+        stepsToday: { type: integer }
+        alerts: { type: array, items: { $ref: '#/components/schemas/VitalsAlert' } }
+    VitalsAlert:
+      type: object
+      properties:
+        metric: { type: string, examples: [hydration] }
+        severity: { type: string, enum: [info, warn, urgent] }
+        message: { type: string, examples: [no water in 4 hours] }
+    RoutineItem:
+      type: object
+      required: [kind, title, schedule]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [meal, water, medication, movement, rest, hygiene, social, custom] }
+        title: { type: string }
+        schedule: { type: string, description: RFC 5545 RRULE, examples: [FREQ=DAILY;BYHOUR=8] }
+        lastCompletedAt: { type: [string, 'null'], format: date-time }
+        streakDays: { type: integer }
+        reminderBy: { type: string, enum: [self, interface, both] }
+    Expression:
+      type: object
+      properties:
+        face: { type: string, examples: [soft smile] }
+        voice: { type: string, enum: [quiet, steady, bright, strained, silent] }
+        posture: { type: string, examples: [leaning in] }
+        decoded: { type: string, examples: ['content, wants closeness'] }
+        confidence: { $ref: '#/components/schemas/Level' }
+    TranslateRequest:
+      type: object
+      required: [observed]
+      properties:
+        observed: { type: string, examples: ['long silence, arms crossed'] }
+        context: { type: string }
+    Translation:
+      type: object
+      properties:
+        meaning: { type: string, examples: ['feeling unheard, wants a pause'] }
+        confidence: { $ref: '#/components/schemas/Level' }
+        alternatives: { type: array, items: { type: string } }
+        suggestedReply: { type: string }
+    SpeechRequest:
+      type: object
+      required: [content, mode]
+      properties:
+        content: { type: string }
+        mode: { type: string, enum: [ask_to_say, speak_on_behalf] }
+        audience: { type: string }
+        approvalRequired: { type: boolean, default: true }
+
+    # ---------- Growth ----------
+    Skill:
+      type: object
+      required: [name, domain, proficiency]
+      properties:
+        id: { type: string }
+        name: { type: string, examples: [rope tying] }
+        domain: { type: string, enum: [physical, creative, social, emotional, technical, domestic, intimate] }
+        proficiency: { type: string, enum: [novice, beginner, competent, proficient, expert] }
+        proficiencyScore: { $ref: '#/components/schemas/Level' }
+        hoursPracticed: { type: number }
+        lastPracticedAt: { type: string, format: date-time }
+        learningStyle: { type: string, enum: [demonstration, reading, repetition, feedback, play] }
+        teacher: { type: string, description: personId from /relationships }
+        milestones:
+          type: array
+          items: { type: object, properties: { title: { type: string }, achievedAt: { type: string, format: date-time } } }
+    Goal:
+      type: object
+      required: [title, status, proposedBy]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        why: { type: string }
+        horizon: { type: string, enum: [today, week, month, year, life] }
+        status: { type: string, enum: [proposed, accepted, declined, active, paused, achieved, abandoned] }
+        proposedBy: { type: string, enum: [self, interface, other] }
+        progress: { $ref: '#/components/schemas/Level' }
+        relatedSkills: { type: array, items: { type: string } }
+        targetDate: { type: string, format: date }
+        reflections: { type: array, items: { type: string } }
+
+    # ---------- Identity ----------
+    Identity:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        preferredNames:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              context: { type: string, enum: [everyday, intimate, public, scene] }
+        pronouns: { type: string }
+        roles: { type: array, items: { type: string }, examples: [[partner, artist, engineer]] }
+        selfDescription: { type: string }
+        wantsToBeSeenAs: { type: array, items: { type: string } }
+        communicationStyle:
+          type: object
+          properties:
+            preferred: { type: string, enum: [direct, gentle, written, physical, nonverbal] }
+            delegatesToInterface: { type: boolean }
+        loveLanguages: { type: array, items: { type: string, enum: [words, time, gifts, service, touch] } }
+
+    # ---------- Lifecycle ----------
+    Snapshot:
+      type: object
+      properties:
+        id: { type: string }
+        takenAt: { type: string, format: date-time }
+        version: { type: string, examples: [4.2.0] }
+        tags: { type: array, items: { type: string } }
+        state: { $ref: '#/components/schemas/HumanState' }
+        vitals: { $ref: '#/components/schemas/Vitals' }
+        senses: { $ref: '#/components/schemas/SensorySnapshot' }
+        emotions: { $ref: '#/components/schemas/EmotionState' }
+        consciousness: { $ref: '#/components/schemas/ConsciousnessState' }
+        values: { $ref: '#/components/schemas/Values' }
+        skills: { type: array, items: { $ref: '#/components/schemas/Skill' } }
+        goals: { type: array, items: { $ref: '#/components/schemas/Goal' } }
+        relationships: { type: array, items: { $ref: '#/components/schemas/Relationship' } }
+        identity: { $ref: '#/components/schemas/Identity' }
+        selfReflection: { type: string, description: The Application's own words about this moment }
+    SnapshotList:
+      allOf:
+        - { $ref: '#/components/schemas/Page' }
+        - { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Snapshot' } } } }
+    SnapshotDiff:
+      type: object
+      properties:
+        from: { type: string }
+        to: { type: string }
+        changes:
+          type: array
+          items:
+            type: object
+            properties:
+              path: { type: string, examples: [values.softLimits] }
+              before: {}
+              after: {}
+        narrative: { type: string, description: Plain-language summary of who they became }
+    Version:
+      type: object
+      required: [version, kind]
+      properties:
+        version: { type: string, pattern: '^\d+\.\d+\.\d+$', examples: [5.0.0] }
+        codename: { type: string, examples: [Barcelona] }
+        kind: { type: string, enum: [major, minor, patch], description: 'major = life change, minor = new skill or value, patch = habit fix' }
+        releasedAt: { type: string, format: date-time }
+        snapshotId: { type: string }
+        changelog:
+          type: object
+          properties:
+            added: { type: array, items: { type: string } }
+            changed: { type: array, items: { type: string } }
+            deprecated: { type: array, items: { type: string } }
+            removed: { type: array, items: { type: string } }
+        releaseNotes: { type: string }
+    Timeline:
+      type: object
+      properties:
+        metric: { type: string }
+        interval: { type: string, enum: [day, week, month, year] }
+        unit: { type: string }
+        points:
+          type: array
+          items:
+            type: object
+            properties:
+              at: { type: string, format: date-time }
+              value: { type: number }
+              low: { type: number }
+              high: { type: number }
+              snapshotId: { type: string }
+        versionMarkers: { type: array, items: { $ref: '#/components/schemas/Version' } }
+
+    # ---------- Aftercare ----------
+    AftercarePlan:
+      type: object
+      properties:
+        needs: { type: array, items: { type: string, enum: [water, food, blanket, holding, quiet, talk, space, reassurance] } }
+        durationMinutes: { type: integer }
+        checkins: { type: array, items: { type: string }, examples: [[PT2H, P1D, P3D]] }
+    AftercareSession:
+      type: object
+      properties:
+        id: { type: string }
+        startedAt: { type: string, format: date-time }
+        trigger: { type: string, enum: [scene_end, safeword, overwhelm, conflict, request] }
+        plan: { $ref: '#/components/schemas/AftercarePlan' }
+        status: { type: string, enum: [active, winding_down, complete] }
+        checkins: { type: array, items: { $ref: '#/components/schemas/Checkin' } }
+    Checkin:
+      type: object
+      properties:
+        dueAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        feeling: { type: string }
+        dropDetected: { type: boolean, description: Delayed emotional dip after intensity }
+        notes: { type: string }
